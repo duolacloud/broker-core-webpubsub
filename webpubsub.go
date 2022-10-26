@@ -179,6 +179,7 @@ func (b *wpsBroker) dispatch(m *wps.WPSMessage) error {
 		}
 		if sub.opts.ResultType != nil {
 			e.message = clone.Clone(sub.opts.ResultType)
+			// webpubsub 内部直接作为json处理，解出来是map，这里按照需要的类型重新解
 			bs, _ := json.Marshal(m.Message)
 			if err := json.Unmarshal(bs, e.message); err != nil {
 				e.err = err
