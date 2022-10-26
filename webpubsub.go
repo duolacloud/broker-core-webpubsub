@@ -2,11 +2,13 @@ package webpubsub
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/duolacloud/broker-core"
+	"github.com/huandu/go-clone"
 	wps "github.com/webpubsub/sdk-go/v7"
 )
 
@@ -173,8 +175,18 @@ func (b *wpsBroker) dispatch(m *wps.WPSMessage) error {
 
 	for _, sub := range subscribers {
 		e := &event{
-			topic:   sub.topic,
-			message: m.Message,
+			topic: sub.topic,
+		}
+		if sub.opts.ResultType != nil {
+			e.message = clone.Clone(sub.opts.ResultType)
+			bs, _ := json.Marshal(m.Message)
+			if err := json.Unmarshal(bs, e.message); err != nil {
+				e.err = err
+				e.message = m.Message
+			}
+		}
+		if e.message == nil {
+			e.message = m.Message
 		}
 		if err := sub.handler(e); err != nil {
 			return err
@@ -209,6 +221,7 @@ func (s *wpsSubscriber) Unsubscribe() error {
 type event struct {
 	topic   string
 	message any
+	err     error
 }
 
 func (e *event) Topic() string {
@@ -224,5 +237,5 @@ func (e *event) Ack() error {
 }
 
 func (e *event) Error() error {
-	return nil
+	return e.err
 }

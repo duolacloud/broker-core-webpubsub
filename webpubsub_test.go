@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/duolacloud/broker-core"
-	"github.com/mitchellh/mapstructure"
 	"github.com/stretchr/testify/assert"
 	webpubsub "github.com/webpubsub/sdk-go/v7"
 )
@@ -35,15 +34,12 @@ func TestBroker(t *testing.T) {
 	doneSubscribe := make(chan bool)
 	sub, err := b.Subscribe("test-broker", func(e broker.Event) error {
 		t.Logf("subscribed: %+v", e.Message())
-		u := &User{}
-		err := mapstructure.Decode(e.Message(), u)
-		assert.Nil(t, err)
-		t.Logf("%+v", u)
+		u := e.Message().(*User)
 		assert.Equal(t, pubMsg.Age, u.Age)
 		assert.Equal(t, pubMsg.Name, u.Name)
 		doneSubscribe <- true
 		return nil
-	})
+	}, broker.ResultType(&User{}))
 	assert.Nil(t, err)
 
 	go func() {

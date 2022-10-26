@@ -4,6 +4,7 @@ go 1.18
 
 require (
 	github.com/duolacloud/broker-core v0.0.2
+	github.com/huandu/go-clone v1.4.0
 	github.com/mitchellh/mapstructure v1.1.2
 	github.com/stretchr/testify v1.7.2
 	github.com/webpubsub/sdk-go/v7 v7.0.0-20220628080633-bf57de9e8a46
