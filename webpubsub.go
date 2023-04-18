@@ -8,14 +8,13 @@ import (
 	"sync"
 
 	"github.com/duolacloud/broker-core"
-	"github.com/huandu/go-clone"
 	wps "github.com/webpubsub/sdk-go/v7"
 )
 
 type wpsBroker struct {
-	opts        *broker.Options
-	wps         *wps.WebPubSub
-	mutex       sync.RWMutex
+	opts *broker.Options
+	wps  *wps.WebPubSub
+	sync.RWMutex
 	subscribers map[string][]*wpsSubscriber
 }
 
@@ -30,13 +29,11 @@ func NewBroker(opts ...broker.Option) (broker.Broker, error) {
 	return b, nil
 }
 
-type ContextKey string
-
-const ContextKeyWebPubSub ContextKey = "webpubsub"
+type webpubsubContextKey struct{}
 
 func WithWebPubSub(c *wps.WebPubSub) broker.Option {
 	return func(o *broker.Options) {
-		o.Context = context.WithValue(o.Context, ContextKeyWebPubSub, c)
+		o.Context = context.WithValue(o.Context, webpubsubContextKey{}, c)
 	}
 }
 
@@ -44,7 +41,7 @@ func (b *wpsBroker) Init(opts ...broker.Option) error {
 	for _, o := range opts {
 		o(b.opts)
 	}
-	client, ok := b.opts.Context.Value(ContextKeyWebPubSub).(*wps.WebPubSub)
+	client, ok := b.opts.Context.Value(webpubsubContextKey{}).(*wps.WebPubSub)
 	if !ok {
 		return errors.New("webpubsub client required")
 	}
@@ -87,7 +84,7 @@ func (b *wpsBroker) Connect() error {
 				fmt.Printf("webpubsub subscription: %+v\n", message.Subscription)
 				fmt.Printf("webpubsub time token: %+v\n", message.Timetoken)
 				if err := b.dispatch(message); err != nil {
-					fmt.Printf("webpubsub dispatch message error: %+v\n", err)
+					fmt.Printf("webpubsub subscribe error: %+v\n", err)
 				}
 			}
 		}
@@ -102,17 +99,27 @@ func (b *wpsBroker) Disconnect() error {
 	return nil
 }
 
-func (b *wpsBroker) Publish(topic string, msg any, opts ...broker.PublishOption) error {
-	res, status, err := b.wps.Publish().Channel(topic).Message(msg).Execute()
-	fmt.Printf("webpubsub publish: %+v\n", msg)
+func (b *wpsBroker) Publish(topic string, msg *broker.Message, opts ...broker.PublishOption) error {
+	builder := b.wps.Publish().Channel(topic)
+	if b.opts.Codec != nil {
+		if body, err := b.opts.Codec.Marshal(msg); err != nil {
+			fmt.Printf("webpubsub failed to marshal: %+v\n", err)
+			return err
+		} else {
+			builder = builder.Message(string(body)).Serialize(false)
+		}
+	} else {
+		builder = builder.Message(msg).Serialize(true)
+	}
+	res, status, err := builder.Execute()
 	fmt.Printf("webpubsub publish response: %+v\n", res)
 	fmt.Printf("webpubsub publish status: %+v\n", status)
 	return err
 }
 
 func (b *wpsBroker) Subscribe(topic string, h broker.Handler, opts ...broker.SubscribeOption) (broker.Subscriber, error) {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
+	b.Lock()
+	defer b.Unlock()
 
 	subscribers, ok := b.subscribers[topic]
 	if !ok {
@@ -136,8 +143,8 @@ func (b *wpsBroker) Subscribe(topic string, h broker.Handler, opts ...broker.Sub
 }
 
 func (b *wpsBroker) unsubscribe(sub *wpsSubscriber) error {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
+	b.Lock()
+	defer b.Unlock()
 
 	topic := sub.topic
 	subscribers, ok := b.subscribers[topic]
@@ -164,8 +171,8 @@ func (b *wpsBroker) unsubscribe(sub *wpsSubscriber) error {
 }
 
 func (b *wpsBroker) dispatch(m *wps.WPSMessage) error {
-	b.mutex.RLock()
-	defer b.mutex.RUnlock()
+	b.RLock()
+	defer b.RUnlock()
 
 	subscribers, ok := b.subscribers[m.Channel]
 	if !ok {
@@ -175,22 +182,19 @@ func (b *wpsBroker) dispatch(m *wps.WPSMessage) error {
 
 	for _, sub := range subscribers {
 		e := &event{
-			topic: sub.topic,
+			topic:   sub.topic,
+			message: &broker.Message{},
 		}
-		if sub.opts.ResultType != nil {
-			e.message = clone.Clone(sub.opts.ResultType)
-			// webpubsub 内部直接作为json处理，解出来是map，这里按照需要的类型重新解
-			bs, _ := json.Marshal(m.Message)
-			if err := json.Unmarshal(bs, e.message); err != nil {
-				e.err = err
-				e.message = m.Message
-			}
+
+		body, err := json.Marshal(m.Message)
+		if err != nil {
+			continue
 		}
-		if e.message == nil {
-			e.message = m.Message
+		if err = json.Unmarshal(body, e.message); err != nil {
+			continue
 		}
 		if err := sub.handler(e); err != nil {
-			return err
+			continue
 		}
 	}
 	return nil
@@ -221,7 +225,7 @@ func (s *wpsSubscriber) Unsubscribe() error {
 
 type event struct {
 	topic   string
-	message any
+	message *broker.Message
 	err     error
 }
 
@@ -229,7 +233,7 @@ func (e *event) Topic() string {
 	return e.topic
 }
 
-func (e *event) Message() any {
+func (e *event) Message() *broker.Message {
 	return e.message
 }
 
